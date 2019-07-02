@@ -5,27 +5,26 @@ library(rms)
 library(splines)
 library(huxtable)
 library(DT)
+theme_set(theme_minimal())
 ui <- fluidPage(
   titlePanel("Playing with restricted cubic splines"),
   sidebarLayout(
     sidebarPanel(
-      h4("Tweak relationship with outcome:"),
+      selectInput(inputId = "knots", label = "Select number of knots", choices = c("knots3","knots4","knots5","knots6","knots7"),
+                  selected = "knots3"),
+      h4("Simulate non-linear relationship with outcome:"),
       sliderInput("intercept", "Intercept:", min = -5, max = 5, value = -1),
       sliderInput("beta", "Beta:", min = -0.05, max = 0.05, value = 0.005),
-      h4("Tweak simulation parameters:"),
-      sliderInput("n", "Subject number to simulate:", min = 0, max = 10000, value = 1000),
-      h4("Tweak simulated biomarker:"),
+      sliderInput("a", "a:", min = 0.0000001, max = 0.0001, value = 0.000001),
+      sliderInput("b", "b:", min = 1e-10, max = 1e-7, value = 0.00000001),
+            h4("Simulation parameters:"),
+      sliderInput("n", "Number of subjects:", min = 0, max = 10000, value = 1000),
       sliderInput("mean", "Biomarker mean:", min = 0, max = 10000, value = 500),
-      sliderInput("sd", "Biomarker standard deviation", min = 0, max = 10000, value = 250),
-      selectInput(inputId = "knots", label = "Select number of knots", choices = c("knots3","knots4","knots5","knots6","knots7"),
-                  selected = "knots3")
+      sliderInput("sd", "Biomarker standard deviation", min = 0, max = 5000, value = 150)
     ),
     mainPanel(plotOutput("ggplot"),
-              plotOutput("plot2"),
-               plotOutput("plot"),
-               dataTableOutput("dataframe")
-             
-    )))
+              tableOutput("AIC_t")
+              )))
 
 
 server <- shinyServer(function(input,output){
@@ -41,13 +40,13 @@ server <- shinyServer(function(input,output){
     seq(from=biomarkerlims()[1], to = biomarkerlims()[2])
   })
   #true logit values for the xtest variable
-  logit_l_r <- reactive({
-    input$intercept + (biomarker_r() * input$beta)
+  logit_r <- reactive({
+    input$intercept + (biomarker_r() * input$beta) + (input$a*biomarker_r()^2)+ (0.00000001*biomarker_r()^3)
   })
   #true probabilities
   # nonlinpred <- intercept + (xtest * beta) + (0.00001*xtest^2)+ (0.00000001*xtest^3)
-  prob_l_r <- reactive({
-    round(exp(logit_l_r())/(1 + exp(logit_l_r())),digits=2)
+  prob_r <- reactive({
+    exp(logit_r())/(1 + exp(logit_r()))
   })
   #prob_nl <- exp(nonlinpred)/(1 + exp(nonlinpred))
   # Simulate binary y to have Prob(y=1) = prob(linpred)]
@@ -55,87 +54,60 @@ server <- shinyServer(function(input,output){
     runis <- runif(input$n,0,1)
   })
   ytest_r <- reactive({
-    ytest <- ifelse(runis_r() < prob_l_r(),1,0)
+    ytest <- ifelse(runis_r() < prob_r(),1,0)
   })
   df_r <- reactive({
-    data.frame(biomarker=biomarker_r(),event=ytest_r(),probability=prob_l_r())
+    data.frame(biomarker=biomarker_r(),event=ytest_r(),trueprobability=prob_r())
   }) 
-  output$dataframe = DT::renderDataTable({
-    df_r()
+  output$AIC_t <- renderTable({
+    biomarker_r <- biomarker_r()
+    df_r <- df_r()
+    ddist <<- datadist(df_r)
+    options(datadist='ddist')
+    knots_s <<- switch(input$knots, 
+                       "knots3" = c(.10,.5,.90),
+                       "knots4" = c(.05,.35,.65,.95),
+                       "knots5" = c(.05,.275,.5,.725,.95),
+                       "knots6" = c(.05,.23,.41,.59,.77,.95),
+                       "knots7" = c(.025,.1833,.3417,.5,.6583,.8167,.975)
+    )
+    f <- lrm(ytest_r() ~ (biomarker_r))
+    f_AIC <- data.frame(round(AIC(f),digits=0))
+    f_rcs <- lrm(ytest_r() ~ rcs(biomarker_r,quantile(biomarker_r,knots_s)))  
+    f_rcs_AIC <- data.frame(round(AIC(f_rcs),digits=0))
+    AIC_t <- cbind(f_AIC,f_rcs_AIC)
+    names(AIC_t) <- c("AIC without spline","AIC with spline")
+    AIC_t
   })
+  #Graph true probabilities versus biomarker
+  output$ggplot <- renderPlot({
+    biomarker_r <- biomarker_r()
+    df_r <- df_r()
+    ddist <<- datadist(df_r)
+    options(datadist='ddist')
+    knots_s <<- switch(input$knots, 
+                      "knots3" = c(.10,.5,.90),
+                      "knots4" = c(.05,.35,.65,.95),
+                      "knots5" = c(.05,.275,.5,.725,.95),
+                      "knots6" = c(.05,.23,.41,.59,.77,.95),
+                      "knots7" = c(.025,.1833,.3417,.5,.6583,.8167,.975)
+    )
+    f <- lrm(ytest_r() ~ (biomarker_r))
+    pred <- data.frame(Predict(f,biomarker_r=seq(10,1000,by=1),fun=plogis))
+    f_rcs <- lrm(ytest_r() ~ rcs(biomarker_r,quantile(biomarker_r,knots_s)))  
+    pred_rcs <- data.frame(Predict(f_rcs,biomarker_r=seq(10,1000,by=1),fun=plogis))
+    p <- ggplot() + geom_point(data=df_r(),aes(x=biomarker,y=trueprobability),alpha=0.3,col="red") + annotate("text", x = 800, y = 0.4, label = "True probabilities",col="red")
+    p <- p + geom_line(data=pred,aes(x=biomarker_r,y=yhat)) + annotate("text", x = 800, y = 0.3, label = "Predictions without spline")
+    p<- p + geom_line(data=pred_rcs,aes(x=biomarker_r,y=yhat),col="blue") + annotate("text", x = 800, y = 0.2, label = "Predictions with spline",col="blue")
+    p + labs(x="Biomarker serum concentration",y="Probability of event") +theme(axis.title.x = element_text(size=15),
+                                                                                axis.title.y = element_text(size=15),
+                                                                                axis.text.x = element_text(size=12),
+                                                                                axis.text.y = element_text(size=12))
+    #newdat = expand.grid(biomarker_r = seq(min(biomarker_r), max(biomarker_r), by = 1))
+  })
+    #Graph simulated biomarker
   output$plot<- renderPlot({
     hist(biomarker_r(),col='lightblue')
   })
-  #Define knots locations
-  knots3_r <- reactive({
-  q3<-data.frame(quantile(biomarker_r(),probs=c(.10,.5,.90)))
-  knots3 = c(q3[1,1],q3[2,1],q3[3,1])
-  })
-  
-  knots4_r <- reactive({
-  q4<-data.frame(quantile(biomarker_r(),probs=c(.05,.35,.65,.95)))
-  knots4 = c(q4[1,1],q4[2,1],q4[3,1],q4[4,1])
-  })
-  
-  knots5_r <- reactive({
-  q5<-data.frame(quantile(biomarker_r(),probs=c(.05,.275,.5,.725,.95)))
-  knots5 = c(q5[1,1],q5[2,1],q5[3,1],q5[4,1],q5[5,1])
-  })
-  
-  knots6_r <- reactive({
-  q6<-data.frame(quantile(biomarker_r(),probs=c(.05,.23,.41,.59,.77,.95)))
-  knots6 = c(q6[1,1],q6[2,1],q6[3,1],q6[4,1],q6[5,1],q6[6,1])
-  })
-  
-  knots7_r <- reactive({
-  q7<-data.frame(quantile(biomarker_r(),probs=c(.025,.1833,.3417,.5,.6583,.8167,.975)))
-  knots7 = c(q7[1,1],q7[2,1],q7[3,1],q7[4,1],q7[5,1],q7[6,1],q7[7,1])
-  })
-  
-  output$plot2 <- renderPlot({
-    biomarker_r <- biomarker_r()
-    knots_s <- switch(input$knots, 
-                      "knots3" = knots3_r(),
-                      "knots4" = knots4_r(),
-                      "knots5" = knots5_r(),
-                      "knots6" = knots6_r(),
-                      "knots7" = knots7_r()
-    )
-    fit3 <- glm(ytest_r() ~ bs(biomarker_r,knots = knots3_r()))
-    fit4 <- glm(ytest_r() ~ bs(biomarker_r,knots = knots4_r()))
-    fit5 <- glm(ytest_r() ~ bs(biomarker_r,knots = knots5_r()))
-    fit6 <- glm(ytest_r() ~ bs(biomarker_r,knots = knots6_r()))
-    fit7 <- glm(ytest_r() ~ bs(biomarker_r,knots = knots7_r()))
-    
-    plot(biomarker_r,ytest_r(),col="grey",xlab="Biomarker",ylab="Probability of Response")
-    points(biomarker.grid(),predict(fit3,newdata = list(biomarker_r=biomarker.grid())),col="darkgreen",lwd=2,type="l") 
-    points(biomarker.grid(),predict(fit4,newdata = list(biomarker_r=biomarker.grid())),col="darkred",lwd=2,type="l")
-    points(biomarker.grid(),predict(fit5,newdata = list(biomarker_r=biomarker.grid())),col="darkblue",lwd=2,type="l")
-    points(biomarker.grid(),predict(fit6,newdata = list(biomarker_r=biomarker.grid())),col="yellow",lwd=2,type="l")
-    points(biomarker.grid(),predict(fit7,newdata = list(biomarker_r=biomarker.grid())),col="darkorange",lwd=2,type="l")
-    
-    abline(v=knots_s,lty=2,col="darkgreen")
-  })
-  output$ggplot <- renderPlot({
-    biomarker_r <- biomarker_r()
-    biomarker.grid <- biomarker.grid()
-        knots_s <- switch(input$knots, 
-                      "knots3" = knots3_r(),
-                      "knots4" = knots4_r(),
-                      "knots5" = knots5_r(),
-                      "knots6" = knots6_r(),
-                      "knots7" = knots7_r()
-    )
-    fit3 <- glm(ytest_r() ~ bs(biomarker_r,knots = knots3_r()))    
-    #newdat = expand.grid(biomarker_r = seq(min(biomarker_r), max(biomarker_r), by = 1))
-    newdat = data.frame(predict(fit3, newdata = biomarker.grid,se.fit=TRUE))
-    newdat$upper <- newdat$fit + 1.96*newdat$se.fit
-    newdat$lower <- newdat$fit - 1.96*newdat$se.fit
-    newdat <-cbind(newdat,biomarker.grid)
-    ggplot(df_r(), aes(x = biomarker_r, y = ytest_r())) +
-      geom_point(alpha = .5) +
-      geom_line(data = newdat, aes_string(x=biomarker,y = fit), size = 1)
-  })
   })
 shinyApp(ui, server)
-
