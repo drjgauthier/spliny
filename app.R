@@ -2,6 +2,9 @@ library(shiny)
 library(shinydashboard)
 library(ggplot2)
 library(rms)
+library(splines)
+library(huxtable)
+library(DT)
 library(plotly)
 theme_set(theme_minimal())
 ui <- fluidPage(
@@ -77,10 +80,10 @@ server <- shinyServer(function(input,output){
                       "6" = c(.05,.23,.41,.59,.77,.95),
                       "7" = c(.025,.1833,.3417,.5,.6583,.8167,.975)
     )
-    f <- lrm(ytest_r() ~ (biomarker_r))
-    pred <- data.frame(Predict(f,biomarker_r=seq(10,1000,by=1),fun=plogis))
+    f <- lrm(ytest_r() ~ biomarker_r)
+    pred <- Predict(f,biomarker_r=seq(10,1000,by=1),fun=plogis)
     f_rcs <- lrm(ytest_r() ~ rcs(biomarker_r,quantile(biomarker_r,knots_s)))  
-    pred_rcs <- data.frame(Predict(f_rcs,biomarker_r=seq(10,1000,by=1),fun=plogis))
+    pred_rcs <- Predict(f_rcs,biomarker_r=seq(10,1000,by=1),fun=plogis)
     p <- ggplot() + geom_point(data=df_r(),aes(x=biomarker,y=trueprobability),alpha=0.3,col="red") + annotate("text", x = 800, y = 0.4, label = "True probabilities",col="red")
     p <- p + geom_line(data=pred,aes(x=biomarker_r,y=yhat)) + annotate("text", x = 800, y = 0.3, label = "Predictions without spline")
     p<- p + geom_line(data=pred_rcs,aes(x=biomarker_r,y=yhat),col="blue") + annotate("text", x = 800, y = 0.2, label = "Predictions with spline",col="blue")
@@ -92,3 +95,4 @@ server <- shinyServer(function(input,output){
   })
   })
 shinyApp(ui, server)
+
