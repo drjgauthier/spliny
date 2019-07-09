@@ -1,38 +1,33 @@
 library(shiny)
-library(shinydashboard)
 library(ggplot2)
 library(rms)
-library(splines)
-library(huxtable)
-library(DT)
 library(plotly)
+library(dplyr)
+library(tidyr)
 theme_set(theme_minimal())
 ui <- fluidPage(
-  titlePanel("Playing with restricted cubic splines"),
+  titlePanel("Logistic regression with restricted cubic splines to model non-linear effects"),
   sidebarLayout(
     sidebarPanel(
       selectInput(inputId = "knots", label = "Select number of knots", choices = c("3","4","5","6","7"),
                   selected = "knots3"),
-      h4("Simulate non-linear relationship with outcome:"),
-      sliderInput("intercept", "Intercept:", min = -5, max = 5, value = -1),
-      sliderInput("beta", "Beta:", min = -0.05, max = 0.05, value = 0.005),
-      sliderInput("a", "a:", min = 0.0000001, max = 0.0001, value = 0.000001),
-      sliderInput("b", "b:", min = 1e-10, max = 1e-7, value = 0.00000001),
-            h4("Simulation parameters:"),
-      sliderInput("n", "Number of subjects:", min = 0, max = 10000, value = 1000),
-      sliderInput("mean", "Biomarker mean:", min = 0, max = 10000, value = 500),
-      sliderInput("sd", "Biomarker standard deviation", min = 0, max = 5000, value = 150)
+      sliderInput("intercept", "Baseline risk", min = -2, max = 2, value = 2),
+      sliderInput("beta","Coefficient 1: tweaks direction, strength and non-linearity of effects", min = -0.01, max = 0.002, value = -0.01),
+      sliderInput("a", "Coefficient 2: tweaks direction, strength and non-linearity of effects", min = -6, max = -5, value = -5),
+      sliderInput("n", "Number of subjects to simulate:", min = 0, max = 1000, value = 500),
+      sliderInput("sd", "Biomarker standard deviation (spread)", min = 10, max = 300, value = 200)
     ),
-    mainPanel(plotlyOutput("ggplot"),
-              tableOutput("AIC_t")
+    mainPanel(plotOutput("ggplot",width = "100%",height = "500px",hover=TRUE),
+              tableOutput("AIC_t"),
+              h5("NB: a lower AIC (Akaike Information Criterion) value indicates a better fit")
               )))
 server <- shinyServer(function(input,output){
   biomarker_r <- reactive({
-    round(rnorm(input$n,input$mean,input$sd),digits=2)
+    round(rnorm(input$n,500,input$sd),digits=0)
   })
   #true logit values for the xtest variable
   logit_r <- reactive({
-    input$intercept + (biomarker_r() * input$beta) + (input$a*biomarker_r()^2)+ (0.00000001*biomarker_r()^3)
+    input$intercept + (biomarker_r() * input$beta) + ((10^input$a)*(biomarker_r()^2))
   })
   #true probabilities
   prob_r <- reactive({
@@ -53,7 +48,7 @@ server <- shinyServer(function(input,output){
     df_r <- df_r()
     ddist <<- datadist(df_r)
     options(datadist='ddist')
-    knots_s <<- switch(input$knots, 
+    knots_s <- switch(input$knots, 
                        "knots3" = c(.10,.5,.90),
                        "knots4" = c(.05,.35,.65,.95),
                        "knots5" = c(.05,.275,.5,.725,.95),
@@ -68,7 +63,7 @@ server <- shinyServer(function(input,output){
     names(AIC_t) <- c("AIC without spline","AIC with spline")
     AIC_t
   })
-  output$ggplot <- renderPlotly({
+  output$ggplot <- renderPlot({
     biomarker_r <- biomarker_r()
     df_r <- df_r()
     ddist <<- datadist(df_r)
@@ -80,19 +75,27 @@ server <- shinyServer(function(input,output){
                       "6" = c(.05,.23,.41,.59,.77,.95),
                       "7" = c(.025,.1833,.3417,.5,.6583,.8167,.975)
     )
+    #Fit without rcs
     f <- lrm(ytest_r() ~ biomarker_r)
-    pred <- Predict(f,biomarker_r=seq(10,1000,by=1),fun=plogis)
+    pred <- Predict(f,biomarker_r=seq(1,1000,by=1),fun=plogis,conf.int = F,np = 1000)
+    names(pred) <- c("biomarker","predicted_prob")
+    #Fit with rcs
     f_rcs <- lrm(ytest_r() ~ rcs(biomarker_r,quantile(biomarker_r,knots_s)))  
-    pred_rcs <- Predict(f_rcs,biomarker_r=seq(10,1000,by=1),fun=plogis)
-    p <- ggplot() + geom_point(data=df_r(),aes(x=biomarker,y=trueprobability),alpha=0.3,col="red") + annotate("text", x = 800, y = 0.4, label = "True probabilities",col="red")
-    p <- p + geom_line(data=pred,aes(x=biomarker_r,y=yhat)) + annotate("text", x = 800, y = 0.3, label = "Predictions without spline")
-    p<- p + geom_line(data=pred_rcs,aes(x=biomarker_r,y=yhat),col="blue") + annotate("text", x = 800, y = 0.2, label = "Predictions with spline",col="blue")
-    p<-p + labs(x="Biomarker serum concentration",y="Probability of event") +theme(axis.title.x = element_text(size=12),
-                                                                                axis.title.y = element_text(size=12),
-                                                                                axis.text.x = element_text(size=10),
-                                                                                axis.text.y = element_text(size=10))
-    ggplotly(p)
+    pred_rcs <- Predict(f_rcs,biomarker_r=seq(1,1000,by=1),fun=plogis,conf.int = F,np = 1000)
+    names(pred_rcs) <- c("biomarker","predicted_prob_s")
+    #Data wrangling
+    df <- left_join(df_r,pred,by="biomarker")
+    df <- left_join(df,pred_rcs,by="biomarker")
+    gather(df,key=prob_type,value=prediction,-biomarker,-event) -> df
+    
+    p <- ggplot(df,aes(x=biomarker,y=prediction)) + 
+      geom_line(data=df,aes(col=prob_type),alpha=0.8,size=1)+
+      xlim(0,1000)+
+      labs(x="Biomarker serum concentration",y="Probability of event")+
+      scale_color_manual(values=c("red","blue","black"),labels=c("Predicted probabilities without spline","Predicted probabilities with spline","True probabilities"))+
+      geom_point(data=subset(df,prob_type=="trueprobability"),aes(x=biomarker,y=prediction),alpha=0.1,size=4)+
+      theme(axis.title.x = element_text(size=16),axis.title.y = element_text(size=16),axis.text.x = element_text(size=16),axis.text.y = element_text(size=16),legend.title = element_blank(),legend.text = element_text(size=16))
+    p
   })
   })
 shinyApp(ui, server)
-
