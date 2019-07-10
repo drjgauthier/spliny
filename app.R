@@ -9,13 +9,15 @@ ui <- fluidPage(
   titlePanel("Spliny: restricted cubic splines to model non-linear effects using logistic regression"),
   sidebarLayout(
     sidebarPanel(
-      selectInput(inputId = "knots", label = "Select number of knots", choices = c("3","4","5","6","7"),
-                  selected = "knots3"),
-      sliderInput("intercept", "Intercept (Baseline risk)", min = -2, max = 2, value = 2),
-      sliderInput("beta","Coefficient 1 (α1): tweaks direction, strength and non-linearity of effects", min = -0.01, max = 0.002, value = -0.01),
-      sliderInput("a", "Coefficient 2 (α2): tweaks direction, strength and non-linearity of effects", min = -6, max = -5, value = -5),
-      sliderInput("n", "Number of subjects to simulate:", min = 0, max = 1000, value = 500),
-      sliderInput("sd", "Biomarker standard deviation (spread)", min = 10, max = 300, value = 200)
+      sliderInput("intercept", "Intercept (baseline risk)", min = -2, max = 2, value = 2),
+      sliderInput("beta","Coefficient 1 (α1)", min = -0.01, max = 0.002, value = -0.01),
+      helpText("Tweaks shape of the relationship between the biomarker and the outcome variable"),
+      sliderInput("a", "Coefficient 2 (α2)", min = -6, max = -5, value = -5),
+      helpText("Tweaks shape of the relationship between the biomarker and the outcome variable"),
+      sliderInput("n", "Number of subjects to simulate", min = 0, max = 1000, value = 500),
+      sliderInput("sd", "Biomarker standard deviation (spread)", min = 10, max = 300, value = 200),
+      selectInput(inputId = "knots", label = "Select number of knots for the restricted cubic spline", choices = c("3","4","5","6","7"),
+                  selected = "knots3")
     ),
     mainPanel(plotOutput("ggplot",width = "100%",height = "500px",hover=TRUE),
               helpText("Shaded areas represent the 95% confidence bands of the predictions"),
