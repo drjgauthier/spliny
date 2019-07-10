@@ -29,7 +29,8 @@ ui <- fluidPage(
               withMathJax(),
               helpText("The relationship between the biomarker (x) and the 'true' logit of the event is modeled using the following quadratic function:$$logit(x) = intercept + \\alpha_1 x^2 + 10^{\\alpha_2}x^2$$"),
               hr(),
-              a(href="https://github.com/drjgauthier/splines/blob/master/app.R","R code")
+              a(href="https://github.com/drjgauthier/spliny/blob/master/app.R","App R code on Github"),
+              a(href="https://www.rdocumentation.org/packages/rms/versions/5.1-3.1","R documentation for the rms package")
               )))
 server <- shinyServer(function(input,output){
   biomarker_r <- reactive({
@@ -119,9 +120,6 @@ server <- shinyServer(function(input,output){
       theme(axis.title.x = element_text(size=16),axis.title.y = element_text(size=16),axis.text.x = element_text(size=16,margin = margin(t = 0, r = 0, b = 10, l = 0)),axis.text.y = element_text(size=16),legend.title = element_blank(),legend.text = element_text(size=16))
     p <- p + geom_ribbon(data=df,aes(x=biomarker,ymin=lower,ymax=upper),fill="red",alpha=0.08)
     p + geom_ribbon(data=df,aes(x=biomarker,ymin=lower_s,ymax=upper_s),fill="blue",alpha=0.08)
-  })
-  output$math <- renderUI({
-    withMathJax(helpText("The relationship between the biomarker (x) and the 'true' logit of the event is modeled using the following quadratic function: logit(x) = intercept + $$\\alpha1$$x + 10^α2*x^2) $$\\alpha1^2$$"))
   })
   })
 shinyApp(ui, server)
