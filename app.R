@@ -9,15 +9,26 @@ ui <- fluidPage(
   titlePanel("Spliny: restricted cubic splines to model non-linear effects using logistic regression"),
   sidebarLayout(
     sidebarPanel(
-      sliderInput("intercept", "Intercept (baseline risk)", min = -2, max = 2, value = 2),
-      sliderInput("beta","Coefficient 1 (α1)", min = -0.01, max = 0.002, value = -0.01),
-      helpText("Tweaks shape of the relationship between the biomarker and the outcome variable"),
-      sliderInput("a", "Coefficient 2 (α2)", min = -6, max = -5, value = -5),
-      helpText("Tweaks shape of the relationship between the biomarker and the outcome variable"),
-      sliderInput("n", "Number of subjects to simulate", min = 0, max = 1000, value = 500),
-      sliderInput("sd", "Biomarker standard deviation (spread)", min = 10, max = 300, value = 200),
+      selectInput("functiontype","Function modeling the non-linear relationship",
+                  c("Hyperbolic tangent","Tangent","Sine")),
+      conditionalPanel(
+        condition="input.functiontype=='Tangent'",
+        sliderInput("t","Tweak function shape (a)", min = 5, max = 20, value = 5),
+        helpText("Increasing this parameter steepens the shape of the relationship")
+              ),
+      conditionalPanel(
+        condition="input.functiontype=='Sine'",
+        sliderInput("s","Tweak function shape (a)", min = 100, max = 500, value = 150)
+        ),
+      conditionalPanel(
+        condition="input.functiontype=='Hyperbolic tangent'",
+        sliderInput("ht","Tweak function shape (a)", min = 50, max = 400, value = 50),
+        helpText("Increasing this parameter flattens the shape of the relationship")
+        ),
+      sliderInput("n", "Number of simulated subjects", min = 0, max = 1000, value = 500),
       selectInput(inputId = "knots", label = "Select number of knots for the restricted cubic spline", choices = c("3","4","5","6","7"),
-                  selected = "knots3")
+                  selected = "5"),
+      actionButton("do", "Simulate and plot probabilities")
     ),
     mainPanel(plotOutput("ggplot",width = "100%",height = "500px",hover=TRUE),
               helpText("Shaded areas represent the 95% confidence bands of the predictions"),
@@ -26,45 +37,61 @@ ui <- fluidPage(
               textOutput("AIC_TEST"),
               helpText("NB: a lower AIC (Akaike Information Criterion) value indicates a better fit"),
               hr(),
-              withMathJax(),
-              helpText("The relationship between the biomarker (x) and the 'true' logit of the event is modeled using the following quadratic function:$$logit(x) = intercept + \\alpha_1 x^2 + 10^{\\alpha_2}x^2$$"),
+              conditionalPanel(
+                condition="input.functiontype=='Hyperbolic tangent'",
+                withMathJax(),
+                helpText("The relationship between the biomarker and the 'true' simulated logit of the event is modeled using the hyperbolic tangent function: $$logit(biomarker) = \\frac{\\tanh(biomarker-500)}a$$")),
+              conditionalPanel(
+                condition="input.functiontype=='Tangent'",
+                withMathJax(),
+                helpText("The relationship between the biomarker and the 'true' simulated logit of the event is modeled using the trigonometric tangent function: $$logit(biomarker) = \\frac{\\frac{\\tan(biomarker-500)}{325}}a$$")),
+              conditionalPanel(
+                condition="input.functiontype=='Sine'",
+                withMathJax(),
+                helpText("The relationship between the biomarker and the 'true' simulated logit of the event is modeled using the trigonometric sine function: $$logit(biomarker) = \\frac{\\sin(biomarker)}a$$")),
               hr(),
               a(href="https://github.com/drjgauthier/spliny/blob/master/app.R","App R code on Github"),
               a(href="https://www.rdocumentation.org/packages/rms/versions/5.1-3.1","R documentation for the rms package")
               )))
 server <- shinyServer(function(input,output){
+  observeEvent(input$do,{
   biomarker_r <- reactive({
-    round(rnorm(input$n,500,input$sd),digits=0)
+    round(runif(input$n,min=0,max=1000),digits=0)
   })
-  #true logit values for the xtest variable
-  logit_r <- reactive({
-    input$intercept + (biomarker_r() * input$beta) + ((10^input$a)*(biomarker_r()^2))
-  })
-  #true probabilities
-  prob_r <- reactive({
-    exp(logit_r())/(1 + exp(logit_r()))
-  })
-  # Simulate binary y to have Prob(y=1) = prob(linpred)]
-  runis_r <- reactive({
-    runis <- runif(input$n,0,1)
-  })
-  ytest_r <- reactive({
-    ytest <- ifelse(runis_r() < prob_r(),1,0)
-  })
-  df_r <- reactive({
-    data.frame(biomarker=biomarker_r(),event=ytest_r(),trueprobability=prob_r())
-  }) 
-  
+    #true logit values for the xtest variable
+    logit_r <- reactive({
+      if(input$functiontype=="Hyperbolic tangent") {
+        tanh((biomarker_r()-500)/input$ht)}
+      else 
+        if(input$functiontype=="Sine") {
+          sin(biomarker_r()/input$s)
+        }
+      else
+        tan((biomarker_r()-500)/325)/input$t  
+    })
+    #simulated 'true' probabilities
+    prob_r <- reactive({
+      exp(logit_r())/(1 + exp(logit_r()))
+    })
+    # Simulate binary y to have Prob(y=1) = prob(linpred)]
+    runis_r <- reactive({
+      runis <- runif(input$n,0,1)
+    })
+    ytest_r <- reactive({
+      ytest <- ifelse(runis_r() < prob_r(),1,0)
+    })
+    df_r <- reactive({
+      data.frame(biomarker=biomarker_r(),event=ytest_r(),trueprobability=prob_r())
+    })
   knots_r <<- reactive({
     switch(input$knots, 
-           "knots3" = c(.10,.5,.90),
-           "knots4" = c(.05,.35,.65,.95),
-           "knots5" = c(.05,.275,.5,.725,.95),
-           "knots6" = c(.05,.23,.41,.59,.77,.95),
-           "knots7" = c(.025,.1833,.3417,.5,.6583,.8167,.975)
+           "3" = c(.10,.5,.90),
+           "4" = c(.05,.35,.65,.95),
+           "5" = c(.05,.275,.5,.725,.95),
+           "6" = c(.05,.23,.41,.59,.77,.95),
+           "7" = c(.025,.1833,.3417,.5,.6583,.8167,.975)
     )
   })
-  
   output$AIC_t <- renderTable({
     biomarker_r <- biomarker_r()
     df_r <- df_r()
@@ -113,7 +140,7 @@ server <- shinyServer(function(input,output){
     #Graph "true" probabilities and predictions
     p <- ggplot() + 
       geom_line(data=df_g,aes(x=biomarker,y=prediction,col=prob_type),alpha=0.8,size=1)+
-      xlim(0,1000)+
+      #xlim(0,1000)+
       labs(x="Biomarker serum concentration",y="Probability of event")+
       scale_color_manual(values=c("red","blue","black"),labels=c("Predicted probabilities without spline","Predicted probabilities with spline","True probabilities"))+
       geom_point(data=subset(df_g,prob_type=="trueprobability"),aes(x=biomarker,y=prediction),alpha=0.1,size=4)+
@@ -122,4 +149,5 @@ server <- shinyServer(function(input,output){
     p + geom_ribbon(data=df,aes(x=biomarker,ymin=lower_s,ymax=upper_s),fill="blue",alpha=0.08)
   })
   })
+})
 shinyApp(ui, server)
